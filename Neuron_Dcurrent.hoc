@@ -1,0 +1,452 @@
+
+/* Create a single cell containing a dendrite, soma, an axon with 60 micrometer and a axon bleb
+   to investigate generation of spike kink at soma
+   As observed in experiment, spike usually initiated at the axon site 40~70 micrometer away from soma.
+*/
+
+// model Kv1.2 current, and put it into axon initial segment
+
+//----Yuguo Yu 2007 Yale
+
+
+load_file("nrngui.hoc")
+
+// --------------------------------------------------------------
+// redefine some things in stdrun.hoc
+// --------------------------------------------------------------
+objref st, st1, st2, st3 //DC current stimuli
+
+weightg=1 //1 //.03   //0.5
+gkd= 0.006*12 //0.006*8 //0.006*10  //0.006*6*2  
+
+t1=2000
+tstart = 0
+tstop = 22000 //550
+dt = 0.01/1
+steps_per_ms = 1/dt
+
+
+// Create the neuron
+rm = 30000
+v_init    = -70
+celsius   = 37
+Ek = -90   
+Ena = 60
+ra = 100
+c_m = 0.75 // the optimal value, both increase and decrease will decrease slope value
+           //however, small C value will have high dv/dt value
+xn = 1
+gna = 2000*5
+gk = 1600
+ndend=1  
+//create dend[ndend], soma, axon
+create dend, soma, axon, bleb
+
+  dend {
+         L=3000   
+         nseg=L/100  
+         diam = 6    //equivelent dendrite 
+          }
+                
+soma {
+    nseg=1
+    L=30         //increase size make stronger kink
+    diam = 20
+}
+
+axon {
+    L=60 //50
+    nseg=L/5
+    //diam=1
+    diam(0:0.16) = 2:1 // weeken the biphase, but looks closer to the real data
+    diam(0.17:1) = 1:1 // weeken the biphase, but looks closer to the real data
+
+}
+
+
+bleb {
+    nseg=1
+    L=5                 //remove the bleb doesn't changing sth much except increase axon spike 
+                        // phase slope from 2.5 to 4---which is good!
+    diam = 5
+}
+
+   connect dend(1), soma(0)
+   connect axon(0), soma(1)
+   connect bleb(0), axon(1)
+
+proc init_cell() {
+      forall {
+              insert pas
+              Ra = ra
+              cm = c_m
+              g_pas = 1/rm
+              e_pas = v_init
+              }
+              bleb g_pas = 1/rm //1/rm // 5/rm
+      forall insert na             
+             soma.gbar_na = gna/12 
+             
+             axon gbar_na = gna*1.0
+             bleb.gbar_na = gna/3 // 0 //gna*1  //gna/10
+             
+               axon  { insert kd }
+               axon gkbar_kd(0:1)=gkd*0.1:gkd*1
+                 bleb  { insert kd gkbar_kd = 0.3*gkd}  //0} // 0.5*gkd}
+       
+      forsec "dend" gbar_na = 20 //100 //10 //increase this will make cell has spontaneous spikes.
+      
+      forall insert kv
+             soma.gbar_kv = gk/10 //400 //gk/2 // increase this will increase dv/dt amplitude and weak biphase
+             axon.gbar_kv = gk
+              bleb.gbar_kv = gk*0.3  //0 //gk*1  //gk/10
+             dend.gbar_kv=0.5 //2
+             
+   
+      forall if(ismembrane("k_ion")) ek = Ek
+      forall if(ismembrane("na_ion")) {
+                ena = Ena
+                // seems to be necessary for 3d cells to shift Na kinetics -5 mV
+                vshift_na = -5
+                                      }
+}             
+                      
+init_cell()
+//nrnmainmenu()
+//nrncontrolmenu()
+
+
+// --------------------------------------------------------------
+// synapses ----June 5, 2005
+// --------------------------------------------------------------
+ne=3    // number of excitatory synapses
+create dummy
+dummy {L = 20 diam = 20}
+objref espike[ne], esyn[ne],esconn[ne]
+
+// Excitatory synaptic connections
+// set synaptic position and properties
+//ew = 0.0
+ew = weightg  //for Vinit=-70 mV
+soma esyn[0] = new Exp2Syn(0.5)
+soma esyn[1] = new Exp2Syn(0.5)
+soma esyn[2] = new Exp2Syn(0.5)
+
+for i=0, ne-1 {
+  esyn[i].tau1 = 0.1
+  esyn[i].tau2 = 0.2
+  esyn[i].e = 0
+  // spike generator to excitatory connections
+  dummy espike[i] = new NetStim(0.5)
+  // connect spike generator to synapse
+  esconn[i] = new NetCon(espike[i], esyn[i], -20, 1, ew)
+  esconn[0] = new NetCon(espike[0], esyn[0], -20, 1, ew*0.3)
+  }
+  espike[0].interval = 500
+  espike[0].number = 10000
+  espike[0].noise = 0
+  
+  espike[1].interval = 100
+  espike[1].number = 0
+  espike[1].noise = 1
+
+  espike[2].interval = 100
+  espike[2].number = 0
+  espike[2].noise = 1
+
+// Create shape plot to display synapse positions
+// excitatory in red, inhibitory in blue
+objref ns
+ns = new Shape()
+for i=0, ne-1 {
+ns.point_mark(esyn[i], 2)
+}
+
+// Set excitatory weights
+proc eweight() {
+  for i=0, ne-1 esconn[i].weight = $1
+}
+
+xpanel("Connection Weights")
+xvalue("Exc. Weight", "ew", 1, "eweight(ew)", 0, 0)
+xpanel()
+
+
+access soma
+proc newplot() { local wd,ht
+    graphItem = new Graph(0)
+   wd=300 ht=200
+    graphItem.save_name("graphList[0].")
+    graphList[0].append(graphItem)
+   // graphItem.view(100,-1,106,90,300,200,wd,ht)
+   graphItem.view(0,-80,tstop,140,300,200,wd,ht)
+  }
+
+proc newplot1() { local wd,ht
+    graphItem = new Graph(0)
+   wd=300 ht=200
+    graphItem.save_name("graphList[0].")
+    graphList[0].append(graphItem)
+   graphItem.view(0,-3.5,tstop,4,300,200,wd,ht)
+  }
+
+newplot1()
+graphItem.addvar("soma.ina(0.5)",1,1)
+graphItem.addvar("axon.ina(0.9)",2,1)
+//graphItem.addvar("bleb.ina(0.5)",3,1)
+
+
+newplot1()
+graphItem.addvar("soma.i_cap(.5)",1,1)
+graphItem.addvar("axon.i_cap(.9)",2,1)
+//graphItem.addvar("bleb.i_cap(.5)",3,1)
+graphItem.addvar("soma.ina(.5)",5,1)
+graphItem.addvar("axon.ina(.9)",6,1)
+
+objectvar scene_vector_[14]
+objectvar save_window_, rvp_
+save_window_ = new Graph(0)
+save_window_.size(-100,200,-80,40)
+scene_vector_[5] = save_window_
+{save_window_.view(-100, -80, 200, 120, 33, 410, 300, 200)}
+flush_list.append(save_window_)
+save_window_.save_name("flush_list.")
+objectvar rvp_
+//rvp_ = new RangeVarPlot("gbar_na")
+//rvp_ = new RangeVarPlot("ina")
+rvp_ = new RangeVarPlot("v")
+dend rvp_.begin(0)
+//bleb rvp_.end(1)
+//soma rvp_.begin(0)
+//bleb rvp_.end(1)
+save_window_.addobject(rvp_, 2, 1, 0.8, 0.9)  //addobject: Adds the RangeVarPlot to the list of items to be plotted on flush
+
+newplot()
+graphItem.addvar("soma.v(.5)",1,1)
+graphItem.addvar("axon.v(.3)",2,1)
+graphItem.addvar("bleb.v(.5)",3,1)
+
+
+//------controlled by Gluct.mod---------------------------------------------------------------
+access soma
+
+objref fl
+fl = new Gfluct2(0.5)
+
+
+fl.g_e0 = 0.012		// 5 times larger
+fl.g_i0 = 0.012*6
+
+//fl.std_e = 0.012*0.8		// 4 times larger
+//fl.std_i = 0.0264*0.8
+fl.std_e = 0		// 4 times larger
+fl.std_i = 0
+
+
+// --------------------------------------------------------------
+// stimulus
+// --------------------------------------------------------------
+
+  st=new IClamp(.5)
+  st.dur = 5000
+  st.del = 5
+  st.amp = .0
+
+  st1=new IClamp(.5)
+  st1.dur = 5000
+  st1.del = 5
+  st1.amp = .0
+
+  st2=new IClamp(.5)
+  st2.dur = 5000
+  st2.del = 5
+  st2.amp = .0
+  
+  st3=new IClamp(.5)
+  st3.dur = 5000
+  st3.del = 5
+  st3.amp = .0
+
+proc set_stim() {
+  st.loc($1)  st.amp = $2   st.del = $3   st.dur = $4
+}
+
+proc set_stim1() {
+  st1.loc($1)  st1.amp = $2   st1.del = $3   st1.dur = $4
+}
+
+proc set_stim2() {
+  st2.loc($1)  st2.amp = $2   st2.del = $3   st2.dur = $4
+}
+
+proc set_stim3() {
+  st3.loc($1)  st3.amp = $2   st3.del = $3   st3.dur = $4
+}
+
+objref rect, recv, rec_somaic, rec_axonv, rec_blebv
+objref rec_axon1, rec_axon2, rec_axon3, rec_axon4, rec_axon5 , rec_axon6, rec_axon7, rec_axon8, rec_axon9, rec_axon10 
+objref rec_somaic, rec_axonic, rec_blebic, rec_somaina, rec_axonina//used to record values of variables
+objref rec_somaik, recaxonik, recblebina, rec_blebik
+objref csna1, cana1, cana2, cana3, cana4, cana5, cana6, cana7, cana8, cana9, cana10
+objref rec_axonid 	
+rect = new Vector()
+recv = new Vector()
+rec_axonid=new Vector()
+
+rec_axonv=new Vector()
+rec_axon1=new Vector()
+rec_axon2=new Vector()
+rec_axon3=new Vector()
+rec_axon4=new Vector()
+rec_axon5=new Vector()
+rec_axon6=new Vector()
+rec_axon7=new Vector()
+rec_axon8=new Vector()
+rec_axon9=new Vector()
+rec_axon10=new Vector()
+
+rec_somaic=new Vector()
+rec_axonic=new Vector()
+rec_somaina=new Vector()
+rec_axonina=new Vector()
+rec_somaik=new Vector()
+recaxonik=new Vector()
+rec_blebv =new Vector()
+
+objref savdata //used for saving file
+savdata = new File()  //savdata is a file pointer
+//savdata.wopen("neuron_soma.dat")  //open a file with a defined name to save data
+
+objref savdata1 //used for saving file
+savdata1 = new File()  //savdata is a file pointer
+//savdata1.wopen("ina.dat")  //open a file with a defined name to save data
+savdata1.wopen("soma_axon_id.dat")  //open a file with a defined name to save data
+
+//soma set_stim1(.5,-0.5,0,50000)
+proc soma_inj() {
+//   soma set_stim(.5,1.2,10,200)
+
+    soma set_stim(.5,-0.7,0,t1)
+    soma set_stim1(.5,0.7,t1,10000)
+    soma set_stim2(.5,-0.7,10000+t1,10000)
+
+
+//recv.record(&axon.v(0))   //put value of soma.v to recv
+recv.record(&soma.v(0.5))   //put value of soma.v to recv
+rect.record(&t)             //put value of t to rect 
+rec_axonid.record(&axon.ik_kd(0.3))   //put value of soma.v to recv
+
+rec_axon1.record(&axon.v(0.1))
+rec_axon2.record(&axon.v(0.2))
+rec_axon3.record(&axon.v(0.3))
+rec_axon4.record(&axon.v(0.4))
+rec_axon5.record(&axon.v(0.5))
+rec_axon6.record(&axon.v(0.6))
+rec_axon7.record(&axon.v(0.7))
+rec_axon8.record(&axon.v(0.8))
+rec_axon9.record(&axon.v(0.9))
+rec_axon10.record(&axon.v(1))
+rec_blebv.record(&bleb.v(0.5))
+rec_somaic.record(&soma.i_cap(0.5))
+rec_axonic.record(&axon.i_cap(0.9))
+rec_somaina.record(&soma.ina(0.5))
+rec_axonina.record(&axon.ina(0.9))
+rec_somaik.record(&soma.ik(0.5))
+recaxonik.record(&axon.ik(0.9))
+
+
+run() // this is the right position
+
+for i=0,rect.size()-1 {
+//savdata.printf("%g %g %g %g %g %g %g %g %g %g %g %g\n", rect.x(i), recv.x(i), rec_axon1.x(i), rec_axon2.x(i), rec_axon3.x(i), rec_axon4.x(i), rec_axon5.x(i), rec_axon6.x(i), rec_axon7.x(i), rec_axon8.x(i), rec_axon9.x(i), rec_axon10.x(i))
+savdata1.printf("%g %g %g %g %g\n", rect.x(i), recv.x(i), rec_axon10.x(i), rec_axonid.x(i),rec_blebv.x(i))
+//savdata1.printf("%g %g %g %g %g %g %g %g %g\n", rect.x(i), recv.x(i), rec_axonv.x(i),rec_somaic.x(i),rec_axonic.x(i),rec_somaina.x(i),rec_axonina.x(i),rec_somaik.x(i),recaxonik.x(i))
+}
+
+//savdata.close()
+savdata1.close()
+}
+
+
+//------------------figure area--------------------------------------------------
+access soma
+
+proc figv() { local wd,ht
+    graphItem = new Graph(0)
+   wd=300 ht=200
+    graphItem.save_name("graphList[0].")
+    graphList[0].append(graphItem)
+    graphItem.view(0,-80,tstop,140,300,200,wd,ht)
+  }
+
+proc figsyn() { local wd,ht
+    graphItem = new Graph(0)
+   wd=300 ht=200
+    graphItem.save_name("graphList[0].")
+    graphList[0].append(graphItem)
+   graphItem.view(0,-5,tstop,10,300,200,wd,ht)
+  }
+
+proc figina() { local wd,ht
+    graphItem = new Graph(0)
+   wd=300 ht=200
+    graphItem.save_name("graphList[0].")
+    graphList[0].append(graphItem)
+   graphItem.view(0,-20,tstop,22,300,200,wd,ht)
+  }
+
+proc figid() { local wd,ht
+    graphItem = new Graph(0)
+   wd=300 ht=200
+    graphItem.save_name("graphList[0].")
+    graphList[0].append(graphItem)
+   graphItem.view(0,0,tstop,40,300,200,wd,ht)
+  }
+
+objref vbox 
+vbox=new VBox()
+vbox.intercept(1)
+
+
+figina()
+graphItem.addvar("axon.ina(0.2)",2,1)
+
+figid()
+graphItem.addvar("axon.ik_kd(0.2)",2,1)
+//graphItem.addvar("node.ik_kf(0.2)",3,1)
+//graphItem.addvar("node.ik_ks(0.2)",7,1)
+//graphItem.addvar("node.i_hd(0.2)",1,1)
+
+
+//graphItem.addvar("node.ik_kasup(0.9)",3,1)
+
+vbox.intercept(0)
+vbox.map("current",0,0,500, 700)
+
+objref vbox1
+vbox1=new VBox()
+vbox1.intercept(1)
+figsyn()
+graphItem.addvar("esyn[0].i",2,1)
+
+figv()
+graphItem.addvar("soma.v(.5)",1,1)
+graphItem.addvar("axon.v(.2)",2,1)
+
+vbox1.intercept(0)
+vbox1.map("mv",700, 0, 500, 700)
+
+
+objref vbox2 
+vbox2=new VBox()
+vbox2.intercept(1)
+xpanel("Stuart & Sakmann")
+xvalue("stim amp","st.amp")
+xbutton("inject soma","soma_inj()")
+xpanel()
+
+
+nrnmainmenu()
+nrncontrolmenu()
+vbox2.intercept(0)
+vbox2.map("mv",1600, 0, 500, 600)
